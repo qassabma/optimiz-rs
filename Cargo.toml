@@ -39,6 +39,13 @@ thiserror = "1.0"
 ordered-float = "4.2"
 statrs = "0.17"
 
+# Experiment 2 build fix: ndarray-linalg's "openblas-system" feature turns off
+# openblas-src's default features, which drops "rustls". openblas-build then
+# aborts with its own compile_error! and fails to resolve ureq::tls. Declaring
+# openblas-src directly re-enables the TLS feature through feature unification
+# while keeping the system-OpenBLAS linkage.
+openblas-src = { version = "0.10", features = ["system", "rustls"] }
+
 [features]
 default = []
 python-bindings = ["pyo3", "numpy"]
