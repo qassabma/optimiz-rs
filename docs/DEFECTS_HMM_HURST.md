@@ -52,7 +52,7 @@ rather than a missing normalization call.
 ## D. Not a defect: VaR quantile convention
 
 On a heavy-tailed `t(3)` loss series, `cvar_value_py` matches the NumPy tail mean to
-`0.00e+00`, while `historical_var_py` differs from `np.quantile(..., 0.95)` by `2.51e-04`.
+`8.88e-16`, while `historical_var_py` differs from `np.quantile(..., 0.95)` by `3.33e-03`.
 That is consistent with nearest-rank versus linearly interpolated quantiles, not an
 error. Recording it here so the convention is documented rather than rediscovered.
 
