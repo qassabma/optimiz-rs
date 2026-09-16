@@ -16,7 +16,8 @@ build/
 *.so
 *.dylib
 *.dll
-Cargo.lock
+# Cargo.lock is committed on purpose: the openblas-src/ureq feature
+# resolution is what broke this build, so CI resolves with --locked.
 .vscode/
 .idea/
 *.swp
