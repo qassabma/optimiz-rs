@@ -39,6 +39,12 @@ thiserror = "1.0"
 ordered-float = "4.2"
 statrs = "0.17"
 
+# Build fix (separate from the HMM fix): ndarray-linalg's "openblas-system" feature turns off
+# openblas-src's default features, which drops "rustls"; openblas-build 0.10.16 then fails to
+# compile (ureq::tls not found). Declaring openblas-src directly re-enables TLS through feature
+# unification while keeping the system OpenBLAS. Seen on Debian 12, rustc 1.98.1, 2026-09-17.
+openblas-src = { version = "0.10", features = ["system", "rustls"] }
+
 [features]
 default = []
 python-bindings = ["pyo3", "numpy"]
