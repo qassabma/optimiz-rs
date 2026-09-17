@@ -46,7 +46,7 @@ impl<E: EmissionModel> HMM<E> {
 
         for _iter in 0..self.config.n_iterations {
             // E-step: Compute posteriors
-            let alpha = self.forward(observations)?;
+            let (alpha, log_likelihood) = self.forward(observations)?;
             let beta = self.backward(observations)?;
             let gamma = Self::compute_gamma(&alpha, &beta);
             let xi = self.compute_xi(observations, &alpha, &beta)?;
@@ -54,9 +54,9 @@ impl<E: EmissionModel> HMM<E> {
             // M-step: Update parameters
             self.update_parameters(observations, &gamma, &xi)?;
 
-            // Check convergence
-            let log_likelihood = Self::compute_log_likelihood(&alpha);
-
+            // Check convergence on the true log-likelihood: the sum of the logs of the
+            // forward scaling factors. (The last alpha row is normalised to sum 1, so
+            // ln(sum(alpha_T)) is always 0 and made training stop after 2 iterations.)
             if (log_likelihood - prev_ll).abs() < self.config.tolerance {
                 break; // Converged
             }
@@ -67,18 +67,21 @@ impl<E: EmissionModel> HMM<E> {
         Ok(())
     }
 
-    /// Forward algorithm (alpha pass)
-    fn forward(&self, observations: &[f64]) -> Result<Vec<Vec<f64>>> {
+    /// Forward algorithm (alpha pass), scaled row by row.
+    /// Returns the normalised alphas and log P(observations) = sum_t ln(c_t),
+    /// where c_t is the sum of row t before it is normalised.
+    fn forward(&self, observations: &[f64]) -> Result<(Vec<Vec<f64>>, f64)> {
         let n_obs = observations.len();
         let n_states = self.config.n_states;
         let mut alpha = vec![vec![0.0; n_states]; n_obs];
+        let mut log_likelihood = 0.0;
 
         // Initialize
         for s in 0..n_states {
             alpha[0][s] =
                 self.initial_probs[s] * self.config.emission_model.probability(observations[0], s);
         }
-        Self::normalize_row(&mut alpha[0]);
+        log_likelihood += Self::normalize_row(&mut alpha[0]).max(1e-300).ln();
 
         // Recursion
         for t in 1..n_obs {
@@ -88,10 +91,10 @@ impl<E: EmissionModel> HMM<E> {
                     .sum();
                 alpha[t][s] = sum * self.config.emission_model.probability(observations[t], s);
             }
-            Self::normalize_row(&mut alpha[t]);
+            log_likelihood += Self::normalize_row(&mut alpha[t]).max(1e-300).ln();
         }
 
-        Ok(alpha)
+        Ok((alpha, log_likelihood))
     }
 
     /// Backward algorithm (beta pass)
@@ -224,8 +227,8 @@ impl<E: EmissionModel> HMM<E> {
         Ok(())
     }
 
-    /// Helper: Normalize a probability row
-    fn normalize_row(row: &mut [f64]) {
+    /// Helper: Normalize a probability row; returns the sum it had before normalisation
+    fn normalize_row(row: &mut [f64]) -> f64 {
         let sum: f64 = row.iter().sum();
         if sum > 1e-10 {
             row.iter_mut().for_each(|v| *v /= sum);
@@ -233,11 +236,7 @@ impl<E: EmissionModel> HMM<E> {
             let uniform = 1.0 / row.len() as f64;
             row.fill(uniform);
         }
-    }
-
-    /// Helper: Compute log-likelihood from forward probabilities
-    fn compute_log_likelihood(alpha: &[Vec<f64>]) -> f64 {
-        alpha.last().unwrap().iter().sum::<f64>().max(1e-10).ln()
+        sum
     }
 }
 
@@ -253,6 +252,38 @@ mod tests {
 
         assert_eq!(hmm.transition_matrix.len(), 3);
         assert_eq!(hmm.initial_probs.len(), 3);
+    }
+
+    /// Regression test: training must not stop after 2 iterations.
+    /// Deterministic two-regime series (quiet / volatile blocks), no external crates.
+    #[test]
+    fn test_training_runs_past_two_iterations() {
+        let mut x: u64 = 12345;
+        let mut obs = Vec::with_capacity(600);
+        for i in 0..600 {
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let u = ((x >> 33) as f64) / ((1u64 << 31) as f64) - 0.5;
+            let scale = if (i / 100) % 2 == 0 { 0.2 } else { 2.0 };
+            obs.push(u * scale);
+        }
+
+        let fit_with = |iters: usize| -> Vec<f64> {
+            let mut config = HMMConfig::<GaussianEmission>::builder(2).build().unwrap();
+            config.n_iterations = iters;
+            config.tolerance = 1e-12;
+            let mut hmm = HMM::new(config);
+            hmm.fit(&obs).unwrap();
+            hmm.config.emission_model.stds.clone()
+        };
+
+        let two = fit_with(2);
+        let fifty = fit_with(50);
+        assert!(
+            two.iter().zip(fifty.iter()).any(|(a, b)| (a - b).abs() > 1e-9),
+            "50 iterations gave the same parameters as 2: training stops early"
+        );
     }
 
     #[test]

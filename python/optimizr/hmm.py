@@ -153,8 +153,8 @@ class HMM:
             raise ValueError("Model must be fitted before scoring")
         
         X = np.asarray(X).flatten()
-        alpha = self._forward_python(X)
-        return np.log(np.sum(alpha[-1]))
+        self._forward_python(X)
+        return self._log_likelihood
     
     def _fit_python(self, X: np.ndarray, n_iterations: int, tolerance: float):
         """Pure Python implementation of Baum-Welch"""
@@ -187,8 +187,10 @@ class HMM:
             # M-step
             self._update_parameters_python(X, gamma, xi)
             
-            # Check convergence
-            ll = np.log(np.sum(alpha[-1]))
+            # Check convergence on the true log-likelihood (sum of the logs of the forward
+            # scaling factors). alpha[-1] is normalised to sum 1, so log(sum(alpha[-1]))
+            # is always 0 and made training stop after 2 iterations.
+            ll = self._log_likelihood
             if abs(ll - prev_ll) < tolerance:
                 break
             prev_ll = ll
@@ -202,14 +204,19 @@ class HMM:
         for s in range(self.n_states):
             alpha[0, s] = (1.0 / self.n_states) * self._emission_prob(X[0], s)
         
-        alpha[0] /= np.sum(alpha[0])
+        c = max(np.sum(alpha[0]), 1e-300)
+        alpha[0] /= c
+        log_likelihood = np.log(c)
         
         # Recursion
         for t in range(1, n_obs):
             for s in range(self.n_states):
                 alpha[t, s] = np.sum(alpha[t-1] * self.transition_matrix_[:, s]) * self._emission_prob(X[t], s)
-            alpha[t] /= max(np.sum(alpha[t]), 1e-10)
+            c = max(np.sum(alpha[t]), 1e-300)
+            alpha[t] /= c
+            log_likelihood += np.log(c)
         
+        self._log_likelihood = float(log_likelihood)
         return alpha
     
     def _backward_python(self, X: np.ndarray) -> np.ndarray:
